@@ -1,0 +1,62 @@
+# Journal Article Writer - Production Config
+# Override via environment variables or config override file.
+
+domain:
+  # Academic domain for trend detection and retrieval
+  name: "machine_learning"
+  keywords:
+    - "machine learning"
+    - "deep learning"
+    - "natural language processing"
+  years_back: 5
+
+sources:
+  # API rate limits (requests per minute) - respect provider ToS
+  crossref_rpm: 50
+  semantic_scholar_rpm: 100
+  pubmed_rpm: 3
+
+retrieval:
+  max_papers_per_query: 50
+  min_citation_count: 5
+  deduplicate_by_doi: true
+
+synthesis:
+  max_papers_for_synthesis: 30
+  llm_provider: "openai"  # openai, anthropic, local
+  max_tokens_per_call: 4096
+
+article:
+  target_word_count_min: 6000
+  target_word_count_max: 8000
+  abstract_word_min: 150
+  abstract_word_max: 250
+  keywords_count: 6
+
+plagiarism:
+  similarity_threshold: 0.15  # Flag if > 15%
+  shingle_size: 5
+  auto_paraphrase_flagged: true
+
+formatting:
+  font_name: "Times New Roman"
+  font_size: 12
+  margin_inches: 1.0
+  line_spacing: 2.0  # Double
+  running_head: true
+
+output:
+  dir: "output"
+  docx_filename: "article.docx"
+  pdf_filename: "article.pdf"
+  bib_filename: "references.bib"
+  plagiarism_report: "plagiarism_report.json"
+  trends_report: "trends_analysis.json"
+
+logging:
+  level: "INFO"
+  file: "logs/articlewriter.log"
+
+ethics:
+  academic_integrity_disclaimer: true
+  max_retries_per_api: 3
