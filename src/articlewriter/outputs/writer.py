@@ -13,18 +13,18 @@ from articlewriter.models import (
     TrendAnalysisResult,
 )
 from articlewriter.formatting.apa_docx import APAFormatter
+from articlewriter.utils import bib_escape
 
 
 def _apa_to_bib_entry(ref: dict[str, Any], index: int) -> str:
     """Convert one APA-style ref to a minimal BibTeX entry (for references.bib)."""
     apa = ref.get("apa_string", str(ref))
-    doi = ref.get("doi", "")
-    # Generate a key: first author + year if possible
+    doi = ref.get("doi", "") or ""
     key = f"ref{index}"
     lines = [f"@article{{{key},"]
     if doi:
-        lines.append(f'  doi = {{{doi}}},')
-    lines.append(f'  note = {{{apa}}},')
+        lines.append(f"  doi = {{{bib_escape(doi)}}},")
+    lines.append(f"  note = {{{bib_escape(apa)}}},")
     lines.append("}")
     return "\n".join(lines)
 

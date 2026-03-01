@@ -6,17 +6,10 @@ enriches with metadata, and stores in PaperStore with DOI deduplication.
 import time
 from typing import Any
 
-import requests
-
 from articlewriter.models import Paper
 from articlewriter.retrieval.storage import PaperStore
 from articlewriter.exceptions import RetrievalError
-
-
-def _rate_limit(rpm: int) -> None:
-    if rpm <= 0:
-        return
-    time.sleep(60.0 / rpm)
+from articlewriter.utils import get_with_retries, rate_limit, safe_year_from_crossref
 
 
 class ScholarlyRetriever:
@@ -51,8 +44,8 @@ class ScholarlyRetriever:
             "select": "DOI,title,author,abstract,published,container-title,is-referenced-by-count,reference-count",
         }
         headers = {"User-Agent": "ArticleWriter/1.0 (mailto:research@example.com)"}
-        _rate_limit(self.crossref_rpm)
-        resp = requests.get(url, params=params, headers=headers, timeout=30)
+        rate_limit(self.crossref_rpm)
+        resp = get_with_retries(url, params=params, headers=headers, timeout=30)
         resp.raise_for_status()
         items = resp.json().get("message", {}).get("items", [])
         papers = []
@@ -61,11 +54,7 @@ class ScholarlyRetriever:
             title = " ".join(item.get("title", [])) or "Untitled"
             abstract = item.get("abstract", "") or ""
             doi = item.get("DOI")
-            year = None
-            for key in ("published-print", "published-online", "created"):
-                if item.get(key) and item[key].get("date-parts"):
-                    year = item[key]["date-parts"][0][0]
-                    break
+            year = safe_year_from_crossref(item)
             cit = item.get("is-referenced-by-count", item.get("citation-count", 0)) or 0
             if self.min_citation_count and cit < self.min_citation_count:
                 continue
@@ -96,11 +85,11 @@ class ScholarlyRetriever:
         headers = {"Accept": "application/json"}
         if self.semantic_scholar_api_key:
             headers["x-api-key"] = self.semantic_scholar_api_key
-        _rate_limit(self.semantic_scholar_rpm)
-        resp = requests.get(url, params=params, headers=headers, timeout=30)
+        rate_limit(self.semantic_scholar_rpm)
+        resp = get_with_retries(url, params=params, headers=headers, timeout=30)
         if resp.status_code == 429:
             time.sleep(60)
-            resp = requests.get(url, params=params, headers=headers, timeout=30)
+            resp = get_with_retries(url, params=params, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json().get("data", []) or []
         papers = []

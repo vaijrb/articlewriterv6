@@ -106,13 +106,13 @@ class PaperStore:
         return count
 
     def get_all(self, order_by: str = "citation_count DESC") -> list[Paper]:
-        """Return all papers, optionally ordered."""
-        allowed = {"citation_count DESC", "year DESC", "title"}
-        if order_by not in allowed and "citation_count" not in order_by and "year" not in order_by:
+        """Return all papers, optionally ordered. order_by must be in allowlist (SQL-safe)."""
+        allowed = {"citation_count DESC", "year DESC", "title", "citation_count ASC", "year ASC"}
+        if order_by not in allowed:
             order_by = "citation_count DESC"
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute(f"SELECT * FROM papers ORDER BY {order_by}")
+            cursor = conn.execute("SELECT * FROM papers ORDER BY " + order_by)
             return [self._row_to_paper(tuple(r)) for r in cursor.fetchall()]
 
     def get_by_dois(self, dois: list[str]) -> list[Paper]:

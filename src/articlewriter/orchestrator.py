@@ -6,9 +6,17 @@ End-to-end pipeline: trend detection -> retrieval -> synthesis -> article genera
 from pathlib import Path
 from typing import Any
 
+import structlog
+
 from articlewriter.config import load_config, get_env_settings
 from articlewriter.logging_config import configure_logging
-from articlewriter.models import ArticleSections, Paper, SynthesisResult
+from articlewriter.models import (
+    ArticleSections,
+    Paper,
+    PlagiarismReport,
+    SynthesisResult,
+    TrendAnalysisResult,
+)
 from articlewriter.trend_detection import TrendDetector
 from articlewriter.retrieval import ScholarlyRetriever, PaperStore
 from articlewriter.synthesis import SynthesisEngine
@@ -16,7 +24,7 @@ from articlewriter.generation import ArticleGenerator
 from articlewriter.plagiarism import PlagiarismChecker
 from articlewriter.formatting import APAFormatter
 from articlewriter.outputs import OutputWriter
-from articlewriter.exceptions import ArticleWriterError
+from articlewriter.exceptions import ArticleWriterError, ConfigError
 
 
 class ArticleWriterPipeline:
@@ -35,10 +43,11 @@ class ArticleWriterPipeline:
         self._env = env
         self._store: PaperStore | None = None
         self._papers: list[Paper] = []
-        self._trends = None
+        self._trends: TrendAnalysisResult | None = None
         self._synthesis: SynthesisResult | None = None
         self._sections: ArticleSections | None = None
-        self._plagiarism_report = None
+        self._plagiarism_report: PlagiarismReport | None = None
+        self._validate_config()
 
     def _domain(self) -> dict[str, Any]:
         return self.config.get("domain", {})
@@ -64,10 +73,28 @@ class ArticleWriterPipeline:
     def _output_cfg(self) -> dict[str, Any]:
         return self.config.get("output", {})
 
+    def _validate_config(self) -> None:
+        """Ensure required config (e.g. domain keywords) is present; raise ConfigError or set defaults."""
+        domain = self._domain()
+        keywords = domain.get("keywords", [])
+        if not keywords:
+            self.config.setdefault("domain", {})["keywords"] = ["machine learning", "research"]
+            structlog.get_logger().warning("domain.keywords empty; using default keywords")
+
+    def _ensure_llm_key(self) -> None:
+        """Raise ConfigError if LLM provider is set but API key is missing."""
+        syn_cfg = self._synthesis_cfg()
+        provider = (syn_cfg.get("llm_provider") or "openai").lower()
+        if provider == "openai" and not self._env.openai_api_key:
+            raise ConfigError("OPENAI_API_KEY is required for synthesis and article generation (set in .env)")
+        if provider == "anthropic" and not self._env.anthropic_api_key:
+            raise ConfigError("ANTHROPIC_API_KEY is required when llm_provider=anthropic (set in .env)")
+
     def run_trend_detection(self):
         """Step 1: Trend detection; populates papers for retrieval."""
+        structlog.get_logger().info("run_trend_detection", domain=self._domain().get("name"))
         domain = self._domain()
-        keywords = domain.get("keywords", ["machine learning"])
+        keywords = domain.get("keywords") or ["machine learning"]
         years = domain.get("years_back", 5)
         src = self._sources()
         detector = TrendDetector(
@@ -79,6 +106,7 @@ class ArticleWriterPipeline:
         )
         self._trends = detector.run(domain_name=domain.get("name", "default"))
         self._papers = detector.get_papers()
+        structlog.get_logger().info("trend_detection_done", topics=len(self._trends.topics), papers=len(self._papers))
         return self._trends
 
     def run_retrieval(self, extra_queries: list[str] | None = None):
@@ -87,10 +115,14 @@ class ArticleWriterPipeline:
         already ran, merge; otherwise search using domain keywords.
         """
         domain = self._domain()
-        keywords = domain.get("keywords", [])
+        keywords = domain.get("keywords") or []
         queries = list(keywords)
         if extra_queries:
             queries = list(set(queries) | set(extra_queries))
+        if not queries:
+            queries = ["machine learning", "research"]
+            structlog.get_logger().warning("no_retrieval_queries", using_default=queries)
+        structlog.get_logger().info("run_retrieval", queries=len(queries))
         ret_cfg = self._retrieval()
         src = self._sources()
         store = PaperStore(db_path="data/papers.db")
@@ -113,12 +145,15 @@ class ArticleWriterPipeline:
                 all_papers.append(p)
                 seen_dois.add(p.doi)
         self._papers = store.get_all()
+        structlog.get_logger().info("retrieval_done", papers=len(self._papers))
         return self._papers
 
     def run_synthesis(self):
         """Step 3: Research synthesis from stored papers."""
+        self._ensure_llm_key()
         if not self._papers:
             self.run_retrieval()
+        structlog.get_logger().info("run_synthesis", papers=len(self._papers))
         syn_cfg = self._synthesis_cfg()
         max_papers = syn_cfg.get("max_papers_for_synthesis", 30)
         engine = SynthesisEngine(
@@ -129,12 +164,15 @@ class ArticleWriterPipeline:
         )
         papers = self._papers[:max_papers]
         self._synthesis = engine.run(papers, domain=self._domain().get("name", "research"))
+        structlog.get_logger().info("synthesis_done")
         return self._synthesis
 
     def run_article_generation(self, article_title: str | None = None):
         """Step 4: Generate full article sections."""
+        self._ensure_llm_key()
         if self._synthesis is None:
             self.run_synthesis()
+        structlog.get_logger().info("run_article_generation")
         art_cfg = self._article_cfg()
         gen = ArticleGenerator(
             llm_provider=self._synthesis_cfg().get("llm_provider", "openai"),
@@ -153,6 +191,7 @@ class ArticleWriterPipeline:
             domain=self._domain().get("name", "research"),
             article_title=article_title,
         )
+        structlog.get_logger().info("article_generation_done")
         return self._sections
 
     def run_plagiarism_check(self):
@@ -167,6 +206,7 @@ class ArticleWriterPipeline:
             openai_api_key=self._env.openai_api_key,
         )
         self._plagiarism_report, self._sections = checker.run(self._sections, self._papers)
+        structlog.get_logger().info("plagiarism_check_done", risk=self._plagiarism_report.overall_risk)
         return self._plagiarism_report
 
     def run_format_and_output(self, write_pdf: bool = True) -> dict[str, Path]:

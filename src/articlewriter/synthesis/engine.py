@@ -8,6 +8,7 @@ from typing import Any
 
 from articlewriter.models import Paper, SynthesisResult
 from articlewriter.exceptions import SynthesisError
+from articlewriter.utils import strip_json_code_fence
 
 
 def _truncate_abstracts(papers: list[Paper], max_chars_per_paper: int = 1500) -> list[dict[str, Any]]:
@@ -111,9 +112,7 @@ Return only the JSON object, no other text."""
 
         try:
             raw = self._call_llm(system, user)
-            # Strip markdown code block if present
-            if raw.startswith("```"):
-                raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+            raw = strip_json_code_fence(raw)
             data = json.loads(raw)
         except json.JSONDecodeError as e:
             raise SynthesisError(f"LLM did not return valid JSON: {e}") from e

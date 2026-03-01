@@ -9,6 +9,7 @@ from typing import Any
 
 from articlewriter.models import ArticleSections, Paper, SynthesisResult
 from articlewriter.exceptions import SynthesisError
+from articlewriter.utils import strip_json_code_fence
 
 
 def _refs_for_prompt(papers: list[Paper]) -> str:
@@ -130,8 +131,7 @@ Return a single JSON object with these exact keys (all strings except keywords a
 Use only the references listed above; do not add any new source. Return only the JSON object, no markdown."""
 
         raw = self._call_llm(system, user)
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+        raw = strip_json_code_fence(raw)
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as e:

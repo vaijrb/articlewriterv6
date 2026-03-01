@@ -13,6 +13,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 from articlewriter.models import ArticleSections
+from articlewriter.utils import xml_escape
 
 
 def _set_cell_margin(cell: Any, margin_inch: float) -> None:
@@ -224,7 +225,7 @@ class APAFormatter:
             spaceAfter=24,
         )
         story = []
-        story.append(Paragraph(sections.title, title_style))
+        story.append(Paragraph(xml_escape(sections.title), title_style))
         story.append(Spacer(1, 24))
         for heading, body in [
             ("Abstract", sections.abstract),
@@ -241,10 +242,10 @@ class APAFormatter:
         ]:
             if body:
                 story.append(Paragraph(f"<b>{heading}</b>", normal))
-                story.append(Paragraph(body.replace("\n", "<br/>"), normal))
+                story.append(Paragraph(xml_escape(body).replace("\n", "<br/>"), normal))
         story.append(Paragraph("<b>References</b>", normal))
         for ref in sections.references:
             apa = ref.get("apa_string", str(ref)) if isinstance(ref, dict) else str(ref)
-            story.append(Paragraph(apa.replace("\n", " ").replace("&", "&amp;"), normal))
+            story.append(Paragraph(xml_escape(apa).replace("\n", " "), normal))
         doc.build(story)
         return pdf_path

@@ -3,23 +3,15 @@ Trend Detection Module: fetches recent papers from CrossRef and Semantic Scholar
 extracts keywords, and clusters them (TF-IDF + clustering). Outputs ranked trending topics.
 """
 
-import re
 import time
 from typing import Any
 
-import requests
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from articlewriter.models import Paper, TrendingTopic, TrendAnalysisResult
 from articlewriter.exceptions import RetrievalError
-
-# Rate limiting
-def _rate_limit(rpm: int) -> None:
-    if rpm <= 0:
-        return
-    delay = 60.0 / rpm
-    time.sleep(delay)
+from articlewriter.utils import get_with_retries, rate_limit, safe_year_from_crossref
 
 
 class TrendDetector:
@@ -56,8 +48,8 @@ class TrendDetector:
         headers = {
             "User-Agent": "ArticleWriter/1.0 (mailto:research@example.com; scholarly use)",
         }
-        _rate_limit(self.crossref_rpm)
-        resp = requests.get(url, params=params, headers=headers, timeout=30)
+        rate_limit(self.crossref_rpm)
+        resp = get_with_retries(url, params=params, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         return data.get("message", {}).get("items", [])
@@ -69,11 +61,11 @@ class TrendDetector:
         headers = {"Accept": "application/json"}
         if self.semantic_scholar_api_key:
             headers["x-api-key"] = self.semantic_scholar_api_key
-        _rate_limit(self.semantic_scholar_rpm)
-        resp = requests.get(url, params=params, headers=headers, timeout=30)
+        rate_limit(self.semantic_scholar_rpm)
+        resp = get_with_retries(url, params=params, headers=headers, timeout=30)
         if resp.status_code == 429:
             time.sleep(60)
-            resp = requests.get(url, params=params, headers=headers, timeout=30)
+            resp = get_with_retries(url, params=params, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         return data.get("data", []) or []
@@ -85,13 +77,7 @@ class TrendDetector:
             author_list.append(name.strip() or "Unknown")
         title = " ".join(item.get("title", [])) or "Untitled"
         abstract = item.get("abstract", "") or ""
-        year = None
-        if item.get("published-print"):
-            year = item["published-print"].get("date-parts", [[]])[0][0]
-        if year is None and item.get("published-online"):
-            year = item["published-online"].get("date-parts", [[]])[0][0]
-        if year is None and item.get("created"):
-            year = item["created"].get("date-parts", [[]])[0][0]
+        year = safe_year_from_crossref(item)
         doi = item.get("DOI")
         return Paper(
             title=title,
